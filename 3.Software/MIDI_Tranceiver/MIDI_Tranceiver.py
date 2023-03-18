@@ -2,9 +2,15 @@ import mido
 import serial
 
 input_ports = mido.get_input_names()
+output_ports = mido.get_output_names()
 print("Input ports:", input_ports)
+print("Output ports:", output_ports)
+
 input_port_index = 0
 in_port = mido.open_input(input_ports[input_port_index])
+
+output_port_index = 2
+loopbe1_output = mido.open_output(output_ports[output_port_index])
 
 serial_port = 'COM3'
 ser = serial.Serial(
@@ -24,6 +30,7 @@ try:
     while True:
         for msg in in_port.iter_pending():
             print("收到的MIDI信息喵:", msg)
+            loopbe1_output.send(msg)
             if msg.type == 'note_on':
                 data = [1, msg.note, msg.velocity]
                 print(data)
@@ -35,4 +42,4 @@ try:
 except KeyboardInterrupt:
     print("有错误退出了喵...")
 
-in_port.close()
+# in_port.close()

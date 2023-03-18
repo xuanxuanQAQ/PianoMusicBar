@@ -1,74 +1,31 @@
 #include <stdio.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "esp_log.h"
 #include "esp_err.h"
+#include "driver/uart.h"
 #include "esp_wifi.h"
 #include "nvs_flash.h"
-// #include "mqtt_client.h"
-// #include "mqtt5_client.h"
+#include "mqtt_client.h"
+#include "mqtt5_client.h"
 
 #include "led_strip_types.h"
 #include "led_strip_rmt.h"
 #include "led_strip.h"
 
 #define LED_GPIO_NUM 13         // LED灯条输出GPIO口
-#define LED_NUM 30               // LED灯条LED灯数
+#define LED_NUM 190             // LED灯条LED灯数
 #define RMT_RESOLUTION 10000000 // RMT分辨率
-#define WIFI_SSID "CMCC-9XAK"   // wifi账号
-#define WIFI_PASS "2Z9CKKLS"    // wifi密码
-#define WIFI_MAX_RETRY_NUM 5    // wifi最大尝试重连次数
-// #define MQTT_BROKER_URL "mqtt://emqx@120.26.40.90:1883" // MQTT服务器地址
-
-#define WIFI_CONNECTED_BIT BIT0
-#define WIFI_FAIL_BIT BIT1
-
-#define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WPA2_PSK
-// #define USE_PROPERTY_ARR_SIZE sizeof(user_property_arr) / sizeof(esp_mqtt5_user_property_item_t)
-
-// static esp_mqtt5_user_property_item_t user_property_arr[] = {
-//     {"board", "esp32"},
-//     {"u", "user"},
-//     {"p", "password"}};
-
-// static esp_mqtt5_publish_property_config_t publish_property = {
-//     .payload_format_indicator = 1,
-//     .message_expiry_interval = 1000,
-//     .topic_alias = 0,
-//     .response_topic = "/topic/test/response",
-//     .correlation_data = "123456",
-//     .correlation_data_len = 6,
-// };
-
-// static esp_mqtt5_subscribe_property_config_t subscribe_property = {
-//     .subscribe_id = 25555,
-//     .no_local_flag = false,
-//     .retain_as_published_flag = false,
-//     .retain_handle = 0,
-//     .is_share_subscribe = true,
-//     .share_name = "group1",
-// };
-
-// static esp_mqtt5_subscribe_property_config_t subscribe1_property = {
-//     .subscribe_id = 25555,
-//     .no_local_flag = true,
-//     .retain_as_published_flag = false,
-//     .retain_handle = 0,
-// };
-
-// static esp_mqtt5_unsubscribe_property_config_t unsubscribe_property = {
-//     .is_share_subscribe = true,
-//     .share_name = "group1",
-// };
-
-// static esp_mqtt5_disconnect_property_config_t disconnect_property = {
-//     .session_expiry_interval = 60,
-//     .disconnect_reason = 0,
-// };
-
-static EventGroupHandle_t wifi_event_group_handle = NULL;
-static uint32_t s_retry_num = 0; // wifi连接重试次数
+// #define UART_NUM UART_NUM_1
+// #define UART_TX_PIN 17
+// #define UART_RX_PIN 16
+#define UART_NUM UART_NUM_0
+#define UART_TX_PIN 35
+#define UART_RX_PIN 34
+#define UART_BAUDRATE 115200
+#define UART_BUF_SIZE 1024
 
 void nvs_init(void)
 {
@@ -80,7 +37,7 @@ void nvs_init(void)
     }
     if (ret == ESP_OK)
     {
-        ESP_LOGI("NVS_INFO", "NVS初始化完成");
+        ESP_LOGI("NVS_INFO", "NVS初始化完成喵~");
     }
     else
     {
@@ -142,6 +99,23 @@ void led_strip_hsv2rgb(uint32_t h, uint32_t s, uint32_t v, uint32_t *r, uint32_t
     }
 }
 
+void uart_port_init(void)
+{
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    ESP_ERROR_CHECK(uart_driver_install(UART_NUM, UART_BUF_SIZE * 2, 0, 0, NULL, 0));
+
+    ESP_ERROR_CHECK(uart_param_config(UART_NUM, &uart_config));
+
+    uart_set_pin(UART_NUM, UART_TX_PIN, UART_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+}
+
 /**
  * @brief LED灯条初始化函数
  * @param[out] 输出所生成的LED灯条对象的句柄
@@ -168,53 +142,23 @@ led_strip_handle_t LED_strip_init(void)
  * @brief 灯光颜色初始化函数
  *
  */
-void LED_color_init(uint32_t *h, uint32_t *s, uint32_t *v)
+void LED_color_init(uint32_t *h, uint32_t *s, uint32_t *v, int begin, int end)
 {
-    for (int i = 0; i < LED_NUM; i++)
+    for (int i = begin; i < end; i++)
     {
-        h[i] = 28;
-        s[i] = 100;
+        h[i] = 30;
+        s[i] = 89;
         v[i] = 10;
     }
 }
 
 /**
- * @brief 自定义灯光变化函数：此处为月球灯闪烁
+ * @brief uart串口监视线程
  *
  * @param[in] h,s,v
  */
-void LED_color_input(uint32_t *h, uint32_t *s, uint32_t *v)
+void uart_monitor(void *led_handle_ptr)
 {
-    static uint32_t count = 0;
-    static bool flag = true; // flag为true为增加，flag为false为减小
-    count++;
-    for (int i = 0; i < LED_NUM; i++)
-    {
-        if (flag)
-        {
-
-            v[i] += 2;
-        }
-        else
-        {
-            v[i] -= 2;
-        }
-    }
-    if (count == 30)
-    {
-        flag = !flag;
-        count = 0;
-    }
-}
-
-/**
- * @brief LED灯条运行线程
- * @param[in] 输入灯条句柄
- *
- */
-void LED_strip_run(void *led_handle_ptr)
-{
-
     uint32_t red[LED_NUM] = {0};
     uint32_t green[LED_NUM] = {0};
     uint32_t blue[LED_NUM] = {0};
@@ -224,122 +168,58 @@ void LED_strip_run(void *led_handle_ptr)
 
     led_strip_handle_t led_handle = *(led_strip_handle_t *)led_handle_ptr;
 
-    LED_color_init(hue, saturation, value);
-    ESP_LOGI("LED_INFO", "ESP灯条颜色初始化完成");
+    LED_color_init(hue, saturation, value, 0, LED_NUM);
+    ESP_LOGI("LED_INFO", "ESP灯条颜色初始化完成喵~");
+
+    for (int i = 0; i < LED_NUM; i++)
+    {
+        led_strip_hsv2rgb(hue[i], saturation[i], value[i], &red[i], &green[i], &blue[i]);
+        led_strip_set_pixel(led_handle, i, red[i], green[i], blue[i]);
+    }
+    led_strip_refresh(led_handle);
 
     while (1)
     {
-        LED_color_input(hue, saturation, value);
-        // 为LED灯条的每个LED写入RGB值
-        for (int i = 0; i < LED_NUM; i++)
+        uint8_t data[UART_BUF_SIZE];
+        int data_len;
+        int led_position;
+        int velocity;
+
+        data_len = uart_read_bytes(UART_NUM, data, UART_BUF_SIZE, pdMS_TO_TICKS(20));
+
+        if (data_len > 0)
         {
-            led_strip_hsv2rgb(hue[i], saturation[i], value[i], &red[i], &green[i], &blue[i]);
-            led_strip_set_pixel(led_handle, i, red[i], green[i], blue[i]);
+            for (int i = 0; i < data_len; i += 3)
+            {
+                if (data[i] == 1)
+                {
+                    led_position = (108 - data[i + 1]) * 2 + 8;
+                    velocity = (data[i + 2] - 40) / 2 + 10;
+                    for (int j = led_position - 1; j < led_position + 2; j++)
+                    {
+                        hue[j] = 240;
+                        saturation[j] = 80;
+                        value[j] = velocity;
+                        led_strip_hsv2rgb(hue[j], saturation[j], value[j], &red[j], &green[j], &blue[j]);
+                        led_strip_set_pixel(led_handle, j, red[j], green[j], blue[j]);
+                    }
+                    led_strip_refresh(led_handle);
+                }
+                else if (data[i] == 0)
+                {
+                    led_position = (108 - data[i + 1]) * 2 + 8;
+                    for (int j = led_position - 1; j < led_position + 2; j++)
+                    {
+                        hue[j] = 30;
+                        saturation[j] = 89;
+                        value[j] = 10;
+                        led_strip_hsv2rgb(hue[j], saturation[j], value[j], &red[j], &green[j], &blue[j]);
+                        led_strip_set_pixel(led_handle, j, red[j], green[j], blue[j]);
+                    }
+                    led_strip_refresh(led_handle);
+                }
+            }
         }
-        // 刷新LED灯条
-        led_strip_refresh(led_handle);
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-
-/**
- * @brief wifi事件监听函数
- *
- */
-static void wifi_event_handler(void *arg, esp_event_base_t event_base,
-                               int32_t event_id, void *event_data)
-{
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START)
-    {
-        esp_wifi_connect();
-    }
-    else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
-    {
-        if (s_retry_num < WIFI_MAX_RETRY_NUM)
-        {
-            esp_wifi_connect();
-            s_retry_num++;
-            ESP_LOGI("WIFI_INFO", "尝试重新连接到wifi");
-        }
-        else
-        {
-            xEventGroupSetBits(wifi_event_group_handle, WIFI_FAIL_BIT);
-        }
-        ESP_LOGI("WIFI_INFO", "连接到wifi失败");
-    }
-    else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
-    {
-        ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
-        ESP_LOGI("WIFI_INFO", "ip:" IPSTR, IP2STR(&event->ip_info.ip));
-        s_retry_num = 0;
-        xEventGroupSetBits(wifi_event_group_handle, WIFI_CONNECTED_BIT);
-    }
-}
-
-/**
- * @brief wifi初始化函数
- *
- */
-void wifi_init(void)
-{
-    wifi_event_group_handle = xEventGroupCreate();
-
-    ESP_ERROR_CHECK(esp_netif_init());
-
-    esp_event_loop_create_default();
-    esp_netif_create_default_wifi_sta();
-
-    wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-    ESP_ERROR_CHECK(esp_wifi_init(&config));
-    ESP_LOGI("WIFI_INFO", "wifi初始化完成");
-
-    esp_event_handler_instance_t instance_any_id;
-    esp_event_handler_instance_t instance_got_ip;
-
-    esp_event_handler_instance_register(WIFI_EVENT,
-                                        ESP_EVENT_ANY_ID,
-                                        &wifi_event_handler,
-                                        NULL,
-                                        &instance_any_id);
-    esp_event_handler_instance_register(IP_EVENT,
-                                        IP_EVENT_STA_GOT_IP,
-                                        &wifi_event_handler,
-                                        NULL,
-                                        &instance_got_ip);
-
-    wifi_config_t wifi_config = {
-        .sta = {
-            .ssid = WIFI_SSID,
-            .password = WIFI_PASS,
-            .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
-            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
-        },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
-    ESP_ERROR_CHECK(esp_wifi_start());
-
-    // 等待wifi连接
-    EventBits_t bits = xEventGroupWaitBits(wifi_event_group_handle,
-                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                           pdFALSE,
-                                           pdFALSE,
-                                           portMAX_DELAY);
-
-    // wifi连接信息
-    if (bits & WIFI_CONNECTED_BIT)
-    {
-        ESP_LOGI("WIFI_INFO", "成功连接到wifi SSID:%s password:%s",
-                 WIFI_SSID, WIFI_PASS);
-    }
-    else if (bits & WIFI_FAIL_BIT)
-    {
-        ESP_LOGI("WIFI_INFO", "连接到wifi失败 SSID:%s, password:%s",
-                 WIFI_SSID, WIFI_PASS);
-    }
-    else
-    {
-        ESP_LOGE("WIFI_INFO", "我也不知道发生了啥QAQ");
     }
 }
 
@@ -350,9 +230,18 @@ void app_main(void)
 
     // LED初始化
     led_strip_handle_t led_handle = LED_strip_init();
-    ESP_LOGI("LED_INFO", "灯条驱动安装成功");
+    ESP_LOGI("LED_INFO", "灯条驱动安装成功喵~");
 
-    // 创建亮灯任务线程
-    TaskHandle_t LED_strip_run_handle = NULL;
-    xTaskCreate(LED_strip_run, "LED_strip_run", 1024 * 8, (void *)&led_handle, 2, &LED_strip_run_handle);
+    // 初始化UART串口
+    uart_port_init();
+    ESP_LOGI("UART_INFO", "UART初始化成功了喵~");
+
+    // 创建串口监视线程
+    TaskHandle_t uart_monitor_handle = NULL;
+    xTaskCreate(uart_monitor, "LED_strip_run", 1024 * 8, (void *)&led_handle, 2, &uart_monitor_handle);
+
+    while (1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
 }
