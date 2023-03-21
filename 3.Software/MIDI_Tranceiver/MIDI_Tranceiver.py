@@ -6,10 +6,10 @@ output_ports = mido.get_output_names()
 print("Input ports:", input_ports)
 print("Output ports:", output_ports)
 
-input_port_index = 0
+input_port_index = 1
 in_port = mido.open_input(input_ports[input_port_index])
 
-output_port_index = 2
+output_port_index = 1
 loopbe1_output = mido.open_output(output_ports[output_port_index])
 
 serial_port = 'COM3'
